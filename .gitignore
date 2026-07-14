@@ -1,4 +1,4 @@
-# Byte-compiled / optimized / DLL files
+nano .gitignorex# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
 *$py.class
@@ -216,3 +216,11 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+# Project data/model files
+data/raw/
+data/processed/
+models/*.pkl
+models/*.joblib
+__pycache__/
+.DS_Store
+

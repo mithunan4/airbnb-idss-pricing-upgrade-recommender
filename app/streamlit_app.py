@@ -1,25 +1,38 @@
 import sys
 from pathlib import Path
 
-import pandas as pd
 import streamlit as st
 
+# Allow app file to import from src folder
 sys.path.append(str(Path(__file__).resolve().parents[1] / "src"))
 
-from predict import load_model, predict_price
+from predict import load_models, predict_price, predict_occupied_nights
 from recommender import recommend_upgrades
 
 
-st.set_page_config(page_title="Airbnb Upgrade IDSS", layout="wide")
+st.set_page_config(
+    page_title="Airbnb Upgrade IDSS",
+    layout="wide",
+)
+
 
 st.title("Airbnb Pricing & Upgrade Recommendation IDSS")
 
 st.write(
-    "This dashboard helps Airbnb hosts estimate nightly price and decide which listing upgrades "
-    "are most worthwhile based on predicted revenue impact, ROI, payback period, and budget."
+    "This dashboard helps Airbnb hosts estimate nightly price, forecast occupancy, "
+    "and decide which listing upgrades are most worthwhile based on predicted revenue impact, "
+    "ROI, payback period, and budget."
 )
 
-model = load_model()
+
+models = load_models()
+price_model = models["price_model"]
+occupancy_model = models["occupancy_model"]
+
+
+# -----------------------------
+# Sidebar Inputs
+# -----------------------------
 
 st.sidebar.header("Listing Inputs")
 
@@ -54,6 +67,7 @@ review_score = st.sidebar.slider("Review Score", 0.0, 5.0, 4.8, step=0.1)
 number_of_reviews = st.sidebar.slider("Number of Reviews", 0, 300, 20)
 availability_365 = st.sidebar.slider("Availability Days Per Year", 0, 365, 180)
 
+
 st.sidebar.header("Current Amenities")
 
 has_wifi = st.sidebar.checkbox("WiFi", value=True)
@@ -67,12 +81,47 @@ has_pool = st.sidebar.checkbox("Pool", value=False)
 has_hot_tub = st.sidebar.checkbox("Hot Tub", value=False)
 allows_pets = st.sidebar.checkbox("Allows Pets", value=False)
 
+
 st.sidebar.header("Decision Settings")
 
-occupied_nights = st.sidebar.slider("Expected Occupied Nights Per Month", 1, 30, 20)
-budget = st.sidebar.slider("Upgrade Budget ($)", 0, 10000, 3000, step=100)
-min_roi = st.sidebar.slider("Minimum ROI (%)", 0, 100, 5)
-max_payback = st.sidebar.slider("Maximum Payback Period (Months)", 1, 36, 12)
+budget = st.sidebar.slider(
+    "Upgrade Budget ($)",
+    0,
+    10000,
+    3000,
+    step=100,
+)
+
+min_roi = st.sidebar.slider(
+    "Minimum ROI (%)",
+    0,
+    100,
+    5,
+)
+
+max_payback = st.sidebar.slider(
+    "Maximum Payback Period (Months)",
+    1,
+    36,
+    12,
+)
+
+scenario_adjustment = st.sidebar.slider(
+    "Demand Scenario Adjustment (%)",
+    -50,
+    50,
+    0,
+    step=5,
+)
+
+st.sidebar.caption(
+    "Demand scenario adjustment lets the host test optimistic or pessimistic occupancy conditions."
+)
+
+
+# -----------------------------
+# Model Inputs
+# -----------------------------
 
 listing_inputs = {
     "neighbourhood_cleansed": neighbourhood,
@@ -102,50 +151,86 @@ listing_inputs = {
     "allows_pets": int(allows_pets),
 }
 
-predicted_price = predict_price(model, listing_inputs)
-monthly_revenue = predicted_price * occupied_nights
 
-col1, col2, col3 = st.columns(3)
+# -----------------------------
+# Prediction Summary
+# -----------------------------
+
+predicted_price = predict_price(price_model, listing_inputs)
+
+predicted_occupied_nights, predicted_occupancy_rate = predict_occupied_nights(
+    occupancy_model,
+    listing_inputs,
+    scenario_adjustment=scenario_adjustment,
+)
+
+monthly_revenue = predicted_price * predicted_occupied_nights
+
+col1, col2, col3, col4 = st.columns(4)
 
 col1.metric("Predicted Nightly Price", f"${predicted_price:,.2f}")
-col2.metric("Estimated Monthly Revenue", f"${monthly_revenue:,.2f}")
-col3.metric("Occupied Nights Used", occupied_nights)
+col2.metric("Predicted Occupancy Rate", f"{predicted_occupancy_rate:.1%}")
+col3.metric("Predicted Occupied Nights", f"{predicted_occupied_nights:.2f}")
+col4.metric("Estimated Monthly Revenue", f"${monthly_revenue:,.2f}")
+
+
+# -----------------------------
+# Upgrade Recommendations
+# -----------------------------
 
 st.subheader("Upgrade Recommendations")
 
 recommendations = recommend_upgrades(
-    model=model,
+    models=models,
     listing_inputs=listing_inputs,
-    occupied_nights=occupied_nights,
     budget=budget,
     min_roi=min_roi,
     max_payback_months=max_payback,
+    scenario_adjustment=scenario_adjustment,
 )
 
 if recommendations.empty:
-    st.warning("No upgrade recommendations available.")
+    st.warning(
+        "All selected amenities are already included, so there are no remaining upgrades to evaluate."
+    )
 else:
     display_cols = [
         "upgrade",
-        "current_price",
-        "upgraded_price",
         "price_increase",
+        "occupied_nights_change",
         "monthly_revenue_increase",
         "upgrade_cost",
         "roi_percent",
         "payback_months",
-        "within_budget",
         "recommended",
     ]
 
-    st.dataframe(recommendations[display_cols], use_container_width=True)
+    display_table = recommendations[display_cols].rename(
+        columns={
+            "upgrade": "Upgrade",
+            "price_increase": "Price Change ($/night)",
+            "occupied_nights_change": "Occupied Nights Change",
+            "monthly_revenue_increase": "Monthly Revenue Increase ($)",
+            "upgrade_cost": "Upgrade Cost ($)",
+            "roi_percent": "ROI (%)",
+            "payback_months": "Payback Period (Months)",
+            "recommended": "Recommended",
+        }
+    )
+
+    st.dataframe(
+        display_table,
+        use_container_width=True,
+        hide_index=True,
+    )
 
     recommended_options = recommendations[recommendations["recommended"] == True]
 
     if not recommended_options.empty:
         best = recommended_options.iloc[0]
+
         st.success(
-            f"Recommended decision: {best['upgrade']} because it fits the budget, "
+            f"Recommended upgrade: {best['upgrade']} because it fits the budget, "
             f"meets the ROI threshold, and has an estimated payback period of "
             f"{best['payback_months']} months."
         )
@@ -155,9 +240,65 @@ else:
             "lowering the ROI threshold, or extending the payback limit."
         )
 
+
+# -----------------------------
+# Visualization
+# -----------------------------
+
+st.subheader("ROI by Upgrade")
+
+st.write(
+    "Higher ROI means the upgrade is expected to generate more monthly revenue "
+    "relative to its estimated cost. Upgrades with negative ROI are not recommended."
+)
+
+if recommendations.empty:
+    st.info("No ROI chart available because all upgrade options are already selected.")
+else:
+    chart_data = recommendations[["upgrade", "roi_percent"]].copy()
+    chart_data = chart_data.rename(
+        columns={
+            "upgrade": "Upgrade",
+            "roi_percent": "ROI (%)",
+        }
+    )
+
+    chart_data = chart_data.set_index("Upgrade")
+
+    st.bar_chart(chart_data)
+
+
+st.subheader("Revenue Impact by Upgrade")
+
+st.write(
+    "This chart shows how much each upgrade is expected to change monthly revenue "
+    "after combining predicted nightly price and predicted occupied nights."
+)
+
+if recommendations.empty:
+    st.info("No revenue impact chart available because all upgrade options are already selected.")
+else:
+    revenue_chart = recommendations[["upgrade", "monthly_revenue_increase"]].copy()
+    revenue_chart = revenue_chart.rename(
+        columns={
+            "upgrade": "Upgrade",
+            "monthly_revenue_increase": "Monthly Revenue Increase ($)",
+        }
+    )
+
+    revenue_chart = revenue_chart.set_index("Upgrade")
+
+    st.bar_chart(revenue_chart)
+
+
+# -----------------------------
+# Decision Impact Explanation
+# -----------------------------
+
 st.subheader("Decision Impact")
 
 st.write(
-    "Changing the listing inputs or decision settings updates the predicted price, revenue estimate, "
-    "and upgrade ranking. This helps the host compare upgrade scenarios before investing money."
+    "Changing the listing inputs or decision settings updates the predicted price, "
+    "predicted occupancy, estimated revenue, ROI, payback period, and final upgrade recommendation. "
+    "This helps the host compare upgrade scenarios before investing money."
 )

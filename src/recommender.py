@@ -1,5 +1,5 @@
 import pandas as pd
-from predict import load_model, predict_price
+from predict import load_models, predict_price, predict_occupied_nights
 
 
 # Estimated upgrade costs in dollars
@@ -44,37 +44,61 @@ def calculate_payback_period(upgrade_cost, monthly_revenue_increase):
 
 
 def recommend_upgrades(
-    model,
+    models,
     listing_inputs,
-    occupied_nights=20,
     budget=3000,
     min_roi=5,
     max_payback_months=12,
+    scenario_adjustment=0,
 ):
-    current_price = predict_price(model, listing_inputs)
-    current_monthly_revenue = estimate_monthly_revenue(current_price, occupied_nights)
+    price_model = models["price_model"]
+    occupancy_model = models["occupancy_model"]
+
+    current_price = predict_price(price_model, listing_inputs)
+
+    current_occupied_nights, current_occupancy_rate = predict_occupied_nights(
+        occupancy_model,
+        listing_inputs,
+        scenario_adjustment=scenario_adjustment,
+    )
+
+    current_monthly_revenue = estimate_monthly_revenue(
+        current_price,
+        current_occupied_nights,
+    )
 
     recommendations = []
 
     for upgrade_feature, upgrade_cost in UPGRADE_COSTS.items():
-        # Skip upgrades the listing already has
+        # Skip upgrades that the listing already has
         if listing_inputs.get(upgrade_feature, 0) == 1:
             continue
 
-        # Simulate adding the upgrade
         upgraded_listing = listing_inputs.copy()
         upgraded_listing[upgrade_feature] = 1
 
-        upgraded_price = predict_price(model, upgraded_listing)
+        upgraded_price = predict_price(price_model, upgraded_listing)
+
+        upgraded_occupied_nights, upgraded_occupancy_rate = predict_occupied_nights(
+            occupancy_model,
+            upgraded_listing,
+            scenario_adjustment=scenario_adjustment,
+        )
+
         upgraded_monthly_revenue = estimate_monthly_revenue(
-            upgraded_price, occupied_nights
+            upgraded_price,
+            upgraded_occupied_nights,
         )
 
         price_increase = upgraded_price - current_price
+        occupied_nights_change = upgraded_occupied_nights - current_occupied_nights
+        occupancy_rate_change = upgraded_occupancy_rate - current_occupancy_rate
         monthly_revenue_increase = upgraded_monthly_revenue - current_monthly_revenue
+
         roi = calculate_roi(monthly_revenue_increase, upgrade_cost)
         payback_period = calculate_payback_period(
-            upgrade_cost, monthly_revenue_increase
+            upgrade_cost,
+            monthly_revenue_increase,
         )
 
         within_budget = upgrade_cost <= budget
@@ -92,6 +116,12 @@ def recommend_upgrades(
                 "current_price": round(current_price, 2),
                 "upgraded_price": round(upgraded_price, 2),
                 "price_increase": round(price_increase, 2),
+                "current_occupancy_rate": round(current_occupancy_rate, 4),
+                "upgraded_occupancy_rate": round(upgraded_occupancy_rate, 4),
+                "occupancy_rate_change": round(occupancy_rate_change, 4),
+                "current_occupied_nights": round(current_occupied_nights, 2),
+                "upgraded_occupied_nights": round(upgraded_occupied_nights, 2),
+                "occupied_nights_change": round(occupied_nights_change, 2),
                 "current_monthly_revenue": round(current_monthly_revenue, 2),
                 "upgraded_monthly_revenue": round(upgraded_monthly_revenue, 2),
                 "monthly_revenue_increase": round(monthly_revenue_increase, 2),
@@ -119,7 +149,7 @@ def recommend_upgrades(
 
 
 if __name__ == "__main__":
-    model = load_model()
+    models = load_models()
 
     sample_listing = {
         "neighbourhood_cleansed": "Waterfront Communities-The Island",
@@ -150,12 +180,12 @@ if __name__ == "__main__":
     }
 
     results = recommend_upgrades(
-        model=model,
+        models=models,
         listing_inputs=sample_listing,
-        occupied_nights=20,
         budget=3000,
         min_roi=5,
         max_payback_months=12,
+        scenario_adjustment=0,
     )
 
     print(results)

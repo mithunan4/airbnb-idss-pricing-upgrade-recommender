@@ -3,7 +3,8 @@ import numpy as np
 from pathlib import Path
 
 
-RAW_PATH = Path("data/raw/listings.csv.gz")
+LISTINGS_RAW_PATH = Path("data/raw/listings.csv.gz")
+CALENDAR_RAW_PATH = Path("data/raw/calendar.csv.gz")
 PROCESSED_PATH = Path("data/processed/clean_listings.csv")
 
 
@@ -29,8 +30,28 @@ def has_amenity(amenities, keyword):
     return int(keyword.lower() in str(amenities).lower())
 
 
+def build_occupancy_labels():
+    calendar = pd.read_csv(CALENDAR_RAW_PATH)
+
+    # available = "f" means the night is unavailable.
+    # We use unavailable nights as a proxy for occupied/booked nights.
+    calendar["occupied_proxy"] = (calendar["available"] == "f").astype(int)
+
+    occupancy = (
+        calendar.groupby("listing_id")["occupied_proxy"]
+        .mean()
+        .reset_index()
+        .rename(columns={"listing_id": "id", "occupied_proxy": "occupancy_rate"})
+    )
+
+    occupancy["expected_occupied_nights_30"] = occupancy["occupancy_rate"] * 30
+
+    return occupancy
+
+
 def main():
-    df = pd.read_csv(RAW_PATH)
+    listings = pd.read_csv(LISTINGS_RAW_PATH)
+    occupancy = build_occupancy_labels()
 
     columns = [
         "id",
@@ -51,24 +72,14 @@ def main():
         "number_of_reviews",
         "review_scores_rating",
         "host_is_superhost",
-        "host_response_rate",
         "amenities",
     ]
 
-    df = df[columns].copy()
+    df = listings[columns].copy()
 
     df["price"] = df["price"].apply(clean_price)
     df["bathrooms"] = df["bathrooms_text"].apply(extract_bathrooms)
-
     df["host_is_superhost"] = df["host_is_superhost"].map({"t": 1, "f": 0}).fillna(0)
-
-    df["host_response_rate"] = (
-        df["host_response_rate"]
-        .astype(str)
-        .str.replace("%", "", regex=False)
-        .replace("nan", np.nan)
-        .astype(float)
-    )
 
     df["has_wifi"] = df["amenities"].apply(lambda x: has_amenity(x, "wifi"))
     df["has_parking"] = df["amenities"].apply(lambda x: has_amenity(x, "parking"))
@@ -83,7 +94,14 @@ def main():
 
     df = df.drop(columns=["bathrooms_text", "amenities"])
 
-    df = df.dropna(subset=["price", "neighbourhood_cleansed", "room_type", "property_type"])
+    df = df.dropna(
+        subset=[
+            "price",
+            "neighbourhood_cleansed",
+            "room_type",
+            "property_type",
+        ]
+    )
 
     df = df[df["price"] > 0]
     df = df[df["price"] <= df["price"].quantile(0.99)]
@@ -98,11 +116,17 @@ def main():
         "availability_365",
         "number_of_reviews",
         "review_scores_rating",
-        "host_response_rate",
     ]
 
     for col in numeric_cols:
         df[col] = df[col].fillna(df[col].median())
+
+    df = df.merge(occupancy, on="id", how="left")
+
+    df["occupancy_rate"] = df["occupancy_rate"].fillna(df["occupancy_rate"].median())
+    df["expected_occupied_nights_30"] = df["expected_occupied_nights_30"].fillna(
+        df["expected_occupied_nights_30"].median()
+    )
 
     PROCESSED_PATH.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(PROCESSED_PATH, index=False)
@@ -110,6 +134,7 @@ def main():
     print(f"Cleaned data saved to {PROCESSED_PATH}")
     print(f"Rows: {df.shape[0]}")
     print(f"Columns: {df.shape[1]}")
+    print(f"Average occupancy rate: {df['occupancy_rate'].mean():.2%}")
 
 
 if __name__ == "__main__":

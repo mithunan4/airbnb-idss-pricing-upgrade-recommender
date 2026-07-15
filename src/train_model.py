@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 import joblib
 from pathlib import Path
@@ -16,7 +17,7 @@ DATA_PATH = Path("data/processed/clean_listings.csv")
 
 PRICE_MODEL_PATH = Path("models/price_model.joblib")
 OCCUPANCY_MODEL_PATH = Path("models/occupancy_model.joblib")
-RANDOM_FOREST_BENCHMARK_PATH = Path("models/random_forest_price_benchmark.joblib")
+LINEAR_PRICE_BENCHMARK_PATH = Path("models/linear_regression_price_benchmark.joblib")
 
 METRICS_PATH = Path("outputs/metrics/model_metrics.txt")
 
@@ -50,8 +51,6 @@ PRICE_FEATURES = [
 ]
 
 
-# availability_365 is excluded here to avoid leakage because occupancy_rate
-# is created from calendar availability data.
 OCCUPANCY_FEATURES = [
     "neighbourhood_cleansed",
     "room_type",
@@ -104,17 +103,23 @@ def build_preprocessor(features):
         ]
     )
 
-    preprocessor = ColumnTransformer(
+    return ColumnTransformer(
         transformers=[
             ("categorical", categorical_pipeline, CATEGORICAL_FEATURES),
             ("numeric", numeric_pipeline, numeric_features),
         ]
     )
 
-    return preprocessor
 
-
-def train_and_evaluate_model(df, target, features, model_name, model, model_path):
+def train_and_evaluate_model(
+    df,
+    target,
+    features,
+    model_name,
+    model,
+    model_path,
+    is_log_price_model=False,
+):
     X = df[features]
     y = df[target]
 
@@ -135,12 +140,20 @@ def train_and_evaluate_model(df, target, features, model_name, model, model_path
     pipeline.fit(X_train, y_train)
     predictions = pipeline.predict(X_test)
 
-    if target == "occupancy_rate":
-        predictions = predictions.clip(0, 1)
+    if is_log_price_model:
+        actual_values = np.expm1(y_test)
+        predicted_values = np.expm1(predictions)
+        predicted_values = np.maximum(predicted_values, 0)
+    elif target == "occupancy_rate":
+        actual_values = y_test
+        predicted_values = np.clip(predictions, 0, 1)
+    else:
+        actual_values = y_test
+        predicted_values = predictions
 
-    mae = mean_absolute_error(y_test, predictions)
-    rmse = mean_squared_error(y_test, predictions) ** 0.5
-    r2 = r2_score(y_test, predictions)
+    mae = mean_absolute_error(actual_values, predicted_values)
+    rmse = mean_squared_error(actual_values, predicted_values) ** 0.5
+    r2 = r2_score(actual_values, predicted_values)
 
     model_path.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(pipeline, model_path)
@@ -152,38 +165,45 @@ def train_and_evaluate_model(df, target, features, model_name, model, model_path
         "rmse": rmse,
         "r2": r2,
         "model_path": model_path,
+        "is_log_price_model": is_log_price_model,
     }
 
 
 def main():
     df = pd.read_csv(DATA_PATH)
 
+    if "log_price" not in df.columns:
+        df["log_price"] = np.log1p(df["price"])
+
     results = []
 
-    price_linear = train_and_evaluate_model(
+    price_linear_benchmark = train_and_evaluate_model(
         df=df,
-        target="price",
+        target="log_price",
         features=PRICE_FEATURES,
-        model_name="Linear Regression Price Model",
+        model_name="Linear Regression Price Benchmark",
         model=LinearRegression(),
-        model_path=PRICE_MODEL_PATH,
+        model_path=LINEAR_PRICE_BENCHMARK_PATH,
+        is_log_price_model=True,
     )
-    results.append(price_linear)
+    results.append(price_linear_benchmark)
 
-    price_rf_benchmark = train_and_evaluate_model(
+    price_random_forest = train_and_evaluate_model(
         df=df,
-        target="price",
+        target="log_price",
         features=PRICE_FEATURES,
-        model_name="Random Forest Price Benchmark",
+        model_name="Random Forest Price Model",
         model=RandomForestRegressor(
-            n_estimators=150,
+            n_estimators=200,
+            max_depth=20,
+            min_samples_leaf=3,
             random_state=42,
-            max_depth=15,
-            min_samples_leaf=5,
+            n_jobs=-1,
         ),
-        model_path=RANDOM_FOREST_BENCHMARK_PATH,
+        model_path=PRICE_MODEL_PATH,
+        is_log_price_model=True,
     )
-    results.append(price_rf_benchmark)
+    results.append(price_random_forest)
 
     occupancy_linear = train_and_evaluate_model(
         df=df,
@@ -203,13 +223,16 @@ def main():
         output_lines.append(result["model_name"])
         output_lines.append(f"Target: {result['target']}")
 
-        if result["target"] == "price":
+        if result["is_log_price_model"]:
             output_lines.append(f"MAE: ${result['mae']:.2f}")
             output_lines.append(f"RMSE: ${result['rmse']:.2f}")
-        else:
+        elif result["target"] == "occupancy_rate":
             output_lines.append(f"MAE: {result['mae']:.3f} occupancy rate")
             output_lines.append(f"RMSE: {result['rmse']:.3f} occupancy rate")
             output_lines.append(f"MAE in nights/month: {result['mae'] * 30:.2f}")
+        else:
+            output_lines.append(f"MAE: {result['mae']:.3f}")
+            output_lines.append(f"RMSE: {result['rmse']:.3f}")
 
         output_lines.append(f"R2: {result['r2']:.3f}")
         output_lines.append(f"Saved to: {result['model_path']}")

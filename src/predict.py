@@ -1,6 +1,7 @@
 import pandas as pd
 import joblib
 from pathlib import Path
+import numpy as np
 
 
 PRICE_MODEL_PATH = Path("models/price_model.joblib")
@@ -29,9 +30,13 @@ def load_model():
 def predict_price(price_model, listing_inputs):
     """
     Predicts nightly price from listing features.
+    The trained price model predicts log(price), so np.expm1 converts it back to dollars.
     """
     input_df = pd.DataFrame([listing_inputs])
-    predicted_price = price_model.predict(input_df)[0]
+    predicted_log_price = price_model.predict(input_df)[0]
+    predicted_price = np.expm1(predicted_log_price)
+    predicted_price = max(predicted_price, 0)
+
     return round(predicted_price, 2)
 
 

@@ -1,20 +1,31 @@
+import os
 import sys
 from pathlib import Path
 
 import streamlit as st
 
+# -----------------------------
+# Project Paths
+# -----------------------------
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+os.chdir(PROJECT_ROOT)
+
 # Allow app file to import from src folder
-sys.path.append(str(Path(__file__).resolve().parents[1] / "src"))
+sys.path.append(str(PROJECT_ROOT / "src"))
 
 from predict import load_models, predict_price, predict_occupied_nights
 from recommender import recommend_upgrades
 
 
+# -----------------------------
+# Page Setup
+# -----------------------------
+
 st.set_page_config(
     page_title="Airbnb Upgrade IDSS",
     layout="wide",
 )
-
 
 st.title("Airbnb Pricing & Upgrade Recommendation IDSS")
 
@@ -25,7 +36,30 @@ st.write(
 )
 
 
-models = load_models()
+# -----------------------------
+# Neighbourhood Coordinates
+# -----------------------------
+
+NEIGHBOURHOOD_COORDS = {
+    "Waterfront Communities-The Island": {"latitude": 43.64, "longitude": -79.38},
+    "Niagara": {"latitude": 43.64, "longitude": -79.41},
+    "Annex": {"latitude": 43.67, "longitude": -79.40},
+    "Kensington-Chinatown": {"latitude": 43.65, "longitude": -79.40},
+    "Church-Yonge Corridor": {"latitude": 43.66, "longitude": -79.38},
+    "Bay Street Corridor": {"latitude": 43.66, "longitude": -79.39},
+}
+
+
+# -----------------------------
+# Load Models
+# -----------------------------
+
+@st.cache_resource
+def get_models():
+    return load_models()
+
+
+models = get_models()
 price_model = models["price_model"]
 occupancy_model = models["occupancy_model"]
 
@@ -63,9 +97,14 @@ bedrooms = st.sidebar.slider("Bedrooms", 0, 5, 1)
 bathrooms = st.sidebar.slider("Bathrooms", 0.5, 4.0, 1.0, step=0.5)
 beds = st.sidebar.slider("Beds", 1, 6, 1)
 
+minimum_nights = st.sidebar.slider("Minimum Nights", 1, 30, 2)
+maximum_nights = st.sidebar.slider("Maximum Nights", 30, 365, 365)
+
 review_score = st.sidebar.slider("Review Score", 0.0, 5.0, 4.8, step=0.1)
 number_of_reviews = st.sidebar.slider("Number of Reviews", 0, 300, 20)
 availability_365 = st.sidebar.slider("Availability Days Per Year", 0, 365, 180)
+
+host_is_superhost = st.sidebar.checkbox("Superhost", value=False)
 
 
 st.sidebar.header("Current Amenities")
@@ -120,25 +159,45 @@ st.sidebar.caption(
 
 
 # -----------------------------
+# Editable Upgrade Costs
+# -----------------------------
+
+st.sidebar.header("Upgrade Cost Assumptions")
+
+upgrade_costs = {
+    "has_parking": st.sidebar.number_input("Parking Cost ($)", 1, 20000, 800, step=100),
+    "has_self_check_in": st.sidebar.number_input("Self Check-in Cost ($)", 1, 20000, 300, step=100),
+    "allows_pets": st.sidebar.number_input("Pet-Friendly Setup Cost ($)", 1, 20000, 200, step=100),
+    "has_hot_tub": st.sidebar.number_input("Hot Tub Cost ($)", 1, 20000, 3500, step=100),
+    "has_pool": st.sidebar.number_input("Pool Cost ($)", 1, 50000, 8000, step=500),
+    "has_air_conditioning": st.sidebar.number_input("Air Conditioning Cost ($)", 1, 20000, 1500, step=100),
+    "has_washer": st.sidebar.number_input("Washer Cost ($)", 1, 20000, 1000, step=100),
+    "has_dryer": st.sidebar.number_input("Dryer Cost ($)", 1, 20000, 1000, step=100),
+}
+
+
+# -----------------------------
 # Model Inputs
 # -----------------------------
+
+coords = NEIGHBOURHOOD_COORDS[neighbourhood]
 
 listing_inputs = {
     "neighbourhood_cleansed": neighbourhood,
     "room_type": room_type,
     "property_type": property_type,
-    "latitude": 43.64,
-    "longitude": -79.38,
+    "latitude": coords["latitude"],
+    "longitude": coords["longitude"],
     "accommodates": accommodates,
     "bathrooms": bathrooms,
     "bedrooms": bedrooms,
     "beds": beds,
-    "minimum_nights": 2,
-    "maximum_nights": 365,
+    "minimum_nights": minimum_nights,
+    "maximum_nights": maximum_nights,
     "availability_365": availability_365,
     "number_of_reviews": number_of_reviews,
     "review_scores_rating": review_score,
-    "host_is_superhost": 0,
+    "host_is_superhost": int(host_is_superhost),
     "has_wifi": int(has_wifi),
     "has_parking": int(has_parking),
     "has_air_conditioning": int(has_air_conditioning),
@@ -187,6 +246,7 @@ recommendations = recommend_upgrades(
     min_roi=min_roi,
     max_payback_months=max_payback,
     scenario_adjustment=scenario_adjustment,
+    upgrade_costs=upgrade_costs,
 )
 
 if recommendations.empty:
@@ -264,7 +324,6 @@ else:
     )
 
     chart_data = chart_data.set_index("Upgrade")
-
     st.bar_chart(chart_data)
 
 
@@ -287,8 +346,22 @@ else:
     )
 
     revenue_chart = revenue_chart.set_index("Upgrade")
-
     st.bar_chart(revenue_chart)
+
+
+# -----------------------------
+# Model Performance
+# -----------------------------
+
+st.subheader("Model Performance")
+
+metrics_path = Path("outputs/metrics/model_metrics.txt")
+
+if metrics_path.exists():
+    with open(metrics_path, "r") as f:
+        st.text(f.read())
+else:
+    st.info("Model metrics are not available yet. Run src/train_model.py to generate them.")
 
 
 # -----------------------------
@@ -298,7 +371,7 @@ else:
 st.subheader("Decision Impact")
 
 st.write(
-    "Changing the listing inputs or decision settings updates the predicted price, "
-    "predicted occupancy, estimated revenue, ROI, payback period, and final upgrade recommendation. "
-    "This helps the host compare upgrade scenarios before investing money."
+    "Changing the listing inputs, amenity assumptions, upgrade costs, or decision settings updates "
+    "the predicted price, predicted occupancy, estimated revenue, ROI, payback period, and final "
+    "upgrade recommendation. This helps the host compare upgrade scenarios before investing money."
 )

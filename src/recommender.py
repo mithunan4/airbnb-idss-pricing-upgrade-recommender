@@ -2,7 +2,8 @@ import pandas as pd
 from predict import load_models, predict_price, predict_occupied_nights
 
 
-# Estimated upgrade costs in dollars
+# Default estimated upgrade costs in dollars.
+# These can be overridden from the Streamlit sidebar.
 UPGRADE_COSTS = {
     "has_parking": 800,
     "has_self_check_in": 300,
@@ -32,14 +33,27 @@ def estimate_monthly_revenue(nightly_price, occupied_nights):
 
 
 def calculate_roi(monthly_revenue_increase, upgrade_cost):
+    """
+    ROI is calculated as monthly revenue increase divided by upgrade cost.
+    """
     if upgrade_cost <= 0:
+        if monthly_revenue_increase > 0:
+            return float("inf")
         return 0
+
     return (monthly_revenue_increase / upgrade_cost) * 100
 
 
 def calculate_payback_period(upgrade_cost, monthly_revenue_increase):
+    """
+    Payback period shows how many months it takes to recover the upgrade cost.
+    """
     if monthly_revenue_increase <= 0:
         return None
+
+    if upgrade_cost <= 0:
+        return 0
+
     return upgrade_cost / monthly_revenue_increase
 
 
@@ -50,7 +64,24 @@ def recommend_upgrades(
     min_roi=5,
     max_payback_months=12,
     scenario_adjustment=0,
+    upgrade_costs=None,
 ):
+    """
+    Recommends Airbnb listing upgrades based on:
+    - predicted price change
+    - predicted occupancy change
+    - monthly revenue increase
+    - ROI
+    - payback period
+    - host budget
+
+    upgrade_costs allows the Streamlit app to override default upgrade costs
+    with user-entered cost assumptions.
+    """
+
+    if upgrade_costs is None:
+        upgrade_costs = UPGRADE_COSTS
+
     price_model = models["price_model"]
     occupancy_model = models["occupancy_model"]
 
@@ -69,7 +100,7 @@ def recommend_upgrades(
 
     recommendations = []
 
-    for upgrade_feature, upgrade_cost in UPGRADE_COSTS.items():
+    for upgrade_feature, upgrade_cost in upgrade_costs.items():
         # Skip upgrades that the listing already has
         if listing_inputs.get(upgrade_feature, 0) == 1:
             continue
@@ -111,7 +142,7 @@ def recommend_upgrades(
 
         recommendations.append(
             {
-                "upgrade": UPGRADE_LABELS[upgrade_feature],
+                "upgrade": UPGRADE_LABELS.get(upgrade_feature, upgrade_feature),
                 "feature": upgrade_feature,
                 "current_price": round(current_price, 2),
                 "upgraded_price": round(upgraded_price, 2),
@@ -126,7 +157,7 @@ def recommend_upgrades(
                 "upgraded_monthly_revenue": round(upgraded_monthly_revenue, 2),
                 "monthly_revenue_increase": round(monthly_revenue_increase, 2),
                 "upgrade_cost": upgrade_cost,
-                "roi_percent": round(roi, 2),
+                "roi_percent": round(roi, 2) if roi != float("inf") else float("inf"),
                 "payback_months": (
                     round(payback_period, 2) if payback_period is not None else None
                 ),
@@ -179,6 +210,17 @@ if __name__ == "__main__":
         "allows_pets": 0,
     }
 
+    custom_upgrade_costs = {
+        "has_parking": 800,
+        "has_self_check_in": 300,
+        "allows_pets": 200,
+        "has_hot_tub": 3500,
+        "has_pool": 8000,
+        "has_air_conditioning": 1500,
+        "has_washer": 1000,
+        "has_dryer": 1000,
+    }
+
     results = recommend_upgrades(
         models=models,
         listing_inputs=sample_listing,
@@ -186,6 +228,7 @@ if __name__ == "__main__":
         min_roi=5,
         max_payback_months=12,
         scenario_adjustment=0,
+        upgrade_costs=custom_upgrade_costs,
     )
 
     print(results)

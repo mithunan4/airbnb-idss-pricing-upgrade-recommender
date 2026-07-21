@@ -1,52 +1,134 @@
 # Airbnb Pricing & Upgrade Recommendation IDSS
 
-This project is an interactive Intelligent Decision Support System (IDSS) that helps Airbnb hosts estimate nightly price and decide which listing upgrades are most worthwhile based on predicted revenue impact, ROI, payback period, and budget.
+This project is an interactive Intelligent Decision Support System (IDSS) that helps Airbnb hosts estimate nightly price and evaluate which listing upgrades are most worthwhile based on predicted revenue impact, ROI, payback period, and budget.
 
 ## Stakeholder
 
-The stakeholder is an Airbnb host who needs to decide which listing upgrades or amenities to invest in.
+The stakeholder is an independent Airbnb host who personally funds listing upgrades and needs to decide which amenity to add and what nightly price to charge.
 
 ## Decision Supported
 
 The system supports decisions such as:
 
-- Which upgrade should I invest in?
-- How will an amenity change affect predicted nightly price?
-- Which upgrades fit my budget?
-- Which upgrades have the best ROI and payback period?
+- Which upgrade should the host invest in?
+- How would an amenity affect predicted nightly price and monthly revenue?
+- Which upgrades fit within the host's budget?
+- Which upgrades satisfy the host's minimum ROI and maximum payback requirements?
 
 ## Data Source
 
-Data comes from Inside Airbnb for Toronto, Ontario, Canada.
+Data comes from the **Inside Airbnb Toronto** dataset.
 
-Files used locally:
+Raw files downloaded:
 
 - `listings.csv.gz`
 - `calendar.csv.gz`
 - `neighbourhoods.csv`
 
-Raw data is stored locally in `data/raw/` and is not committed to GitHub.
+The current pipeline uses:
 
-## Model
+- `listings.csv.gz` for listing characteristics, location, amenities, reviews, prices, and booking rules.
+- `calendar.csv.gz` for availability information used to estimate occupancy.
 
-The production model is Linear Regression. It predicts nightly Airbnb price based on listing features such as location, property type, room type, bedrooms, bathrooms, review score, and amenities.
+These two files are processed and merged into:
 
-Random Forest was also tested as a benchmark model to compare predictive performance.
+- `data/processed/clean_listings.csv`
 
-## IDSS Functionality
+Both prediction models are trained using `clean_listings.csv`.
 
-The dashboard allows the user to change listing inputs and decision settings, including:
+`neighbourhoods.csv` is downloaded and stored locally but is not currently used by the model pipeline.
 
+Raw and processed data files are stored locally and are not committed to GitHub.
+
+## Models
+
+### Nightly Price Model
+
+The production price model is a **Random Forest Regressor**.
+
+It predicts nightly Airbnb price using listing features such as:
+
+- neighbourhood
+- latitude and longitude
+- property type
+- room type
+- accommodates
 - bedrooms
 - bathrooms
 - beds
 - amenities
-- expected occupied nights
+- review score
+- Superhost status
+- booking rules
+
+Random Forest was selected because it outperformed the Linear Regression benchmark and captures non-linear relationships between listing characteristics.
+
+### Occupancy Model
+
+A separate **Linear Regression** model estimates expected occupancy rate from listing availability data.
+
+Projected monthly revenue is calculated as:
+
+`Predicted nightly price × Predicted occupied nights`
+
+### Benchmark Model
+
+A **Linear Regression** price model is retained as a benchmark for comparison with the Random Forest production model.
+
+## IDSS Functionality
+
+The Streamlit dashboard allows users to modify listing characteristics and decision settings, including:
+
+- neighbourhood
+- property type
+- room type
+- accommodates
+- bedrooms
+- bathrooms
+- beds
+- review score
+- availability days per year
+- current amenities
+- demand scenario
 - upgrade budget
+- upgrade cost assumptions
 - minimum ROI threshold
 - maximum payback period
 
-The system updates predicted nightly price, estimated monthly revenue, and upgrade recommendations in response to these changes.
+The dashboard dynamically updates:
+
+- predicted nightly price
+- estimated occupancy rate
+- predicted occupied nights
+- projected monthly revenue
+- estimated revenue impact of each upgrade
+- ROI
+- payback period
+- ranked upgrade recommendations
+
+Because changing user inputs directly changes the model predictions and upgrade rankings, the system provides interactive decision support rather than a static report.
+
+## Repository Structure
+
+```text
+app/
+    streamlit_app.py
+
+src/
+    data_cleaning.py
+    train_model.py
+    predict.py
+    recommender.py
+
+models/
+    trained model files (.joblib)
+
+data/
+    raw and processed local datasets
+
+outputs/
+    model evaluation metrics
+```
 
 ## How to Run
 
@@ -54,3 +136,31 @@ Install dependencies:
 
 ```bash
 pip install -r requirements.txt
+```
+
+Prepare the processed dataset:
+
+```bash
+python src/data_cleaning.py
+```
+
+Train the models:
+
+```bash
+python src/train_model.py
+```
+
+Launch the Streamlit dashboard:
+
+```bash
+streamlit run app/streamlit_app.py
+```
+
+## Technologies
+
+- Python
+- pandas
+- NumPy
+- scikit-learn
+- Streamlit
+- joblib

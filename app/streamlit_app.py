@@ -132,7 +132,7 @@ budget = st.sidebar.slider(
 )
 
 min_roi = st.sidebar.slider(
-    "Minimum ROI (%)",
+    "Minimum Monthly ROI (%)",
     0,
     100,
     5,
@@ -272,7 +272,7 @@ else:
             "occupied_nights_change": "Occupied Nights Change",
             "monthly_revenue_increase": "Monthly Revenue Increase ($)",
             "upgrade_cost": "Upgrade Cost ($)",
-            "roi_percent": "ROI (%)",
+            "roi_percent": "Monthly ROI (%)",
             "payback_months": "Payback Period (Months)",
             "recommended": "Recommended",
         }
@@ -305,7 +305,7 @@ else:
 # Visualization
 # -----------------------------
 
-st.subheader("ROI by Upgrade")
+st.subheader("Monthly ROI by Upgrade")
 
 st.write(
     "Higher ROI means the upgrade is expected to generate more monthly revenue "
